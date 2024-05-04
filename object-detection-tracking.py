@@ -1,14 +1,14 @@
 """
 This Code 
 
-python object-detection-tracking.py --video_file dogs_in_patio.mp4  --dog_selection_picture caspian.jpg --frame_resize_percentage 30
+python object-detection-tracking.py --video_file dogs_in_patio4.mp4  --dog_selection_picture arlo-identifier-real5.jpg --frame_resize_percentage 100
 """
 
 import cv2
 import argparse
 import numpy as np
 
-x_min,y_min,x_max,y_max=38400,2160,0,0
+#x_min,y_min,x_max,y_max=38400,2160,0,0
 
 def parse_user_input():
     parser = argparse.ArgumentParser(prog='Object Detection and Tracking', 
@@ -60,8 +60,8 @@ def resize_image(img: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: Resized image.
     """
-    width = int(img.shape[1] * 0.2)
-    height = int(img.shape[0] * 0.2)
+    width = int(img.shape[1] * 1)
+    height = int(img.shape[0] * 1)
     dim = (width, height)
     resized_img = cv2.resize(img, dim, interpolation = cv2.INTER_AREA)
     return resized_img
@@ -76,16 +76,50 @@ def feature_extraction(frame):
     Returns:
         tuple[np.ndarray, np.ndarray]: A tuple containing the keypoints and descriptors for the image.
     """
+    # Convert the current frame from BGR to HSV
+    frame_HSV = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Convert frame to grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # Define the lower and upper bounds of the white color in HSV
+    lower_white = np.array([0, 0, 200])
+    upper_white = np.array([180, 50, 255])
+
+    # Create a mask to exclude the white color
+    white_mask = cv2.inRange(frame_HSV, lower_white, upper_white)
+
+    # Apply the mask to the original image
+    bitwise_AND = cv2.bitwise_and(frame, frame, mask=white_mask)
+    
+    contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        # Find the largest contour based on the contour area
+        largest_contour = max(contours, key=cv2.contourArea)
+
+        # Create a blank mask the same size as the original
+        largest_contour_mask = np.zeros_like(white_mask)
+
+        # Draw the largest contour onto the mask
+        cv2.drawContours(largest_contour_mask, [largest_contour], -1, color=255, thickness=cv2.FILLED)
+
+        # Apply this new mask to the original image to isolate the area of the largest contour
+        masked_frame = cv2.bitwise_and(frame, frame, mask=largest_contour_mask)
+
+        draw_object(frame, largest_contour)
 
     # Initialize the SIFT detector
     sift = cv2.SIFT_create()
 
     # Detect keypoints and compute descriptors
-    keypoints, descriptors = sift.detectAndCompute(gray, None)
+    keypoints, descriptors = sift.detectAndCompute(masked_frame, None)
     return keypoints, descriptors
+
+def draw_object(frame, largest_contour):
+    # Calculate de position to draw a rectange around the dog's identifier
+    x, y, w, h = cv2.boundingRect(largest_contour)
+    
+    # Draw a red rectangle around the dog's identifier
+    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
+    #cv2.circle(frame,())
+
 
 def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tuple[np.ndarray, list]:
     """
@@ -101,7 +135,7 @@ def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tupl
     # Define FLANN-based matcher parameters
     FLANN_INDEX_KDTREE = 1
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=150)
+    search_params = dict(checks=50)
 
     # Initialize FLANN matcher
     flann = cv2.FlannBasedMatcher(index_params, search_params)
@@ -112,8 +146,9 @@ def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tupl
     # Apply Lowe's ratio test
     matches_mask = [[0, 0] for i in range(len(matches))]
     for i, (m, n) in enumerate(matches):
-        if m.distance < 0.7 * n.distance:
+        if m.distance < 0.75 * n.distance:
             matches_mask[i] = [1, 0]
+    
     return matches, matches_mask
 
 def draw_keypoints(img):
@@ -145,8 +180,10 @@ def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask
     Returns:
         np.ndarray: Image with matches drawn.
     """
-    draw_params = dict(matchColor=(0, 255, 0), singlePointColor=(255, 0, 0), matchesMask=mask, flags=cv2.DrawMatchesFlags_DEFAULT)
-    img = cv2.drawMatchesKnn(img_1["image"], img_1["features"]["kp"], img_2["image"], img_2["features"]["kp"], matches, None, **draw_params)
+    img = img_2["image"]
+    draw_params = dict(matchColor=(0, 255, 0), singlePointColor=None, matchesMask=mask, flags=2)
+    #img = q(img_1["image"], img_1["features"]["kp"], img_2["image"], img_2["features"]["kp"], matches, output_img, **draw_params)
+    img = cv2.drawKeypoints(img_2["image"], img_2["features"]["kp"], None, color=(0, 255, 0), flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT)
     return img
 
 def close_windows(cap:cv2.VideoCapture)->None:
@@ -180,8 +217,7 @@ def pipeline():
             break
 
         # Resize current frame
-        frame = rescale_frame(frame, user_input.frame_resize_percentage)
-        dog_pic = resize_image(cv2.imread(user_input.dog_selection_picture))
+        dog_pic = cv2.imread(user_input.dog_selection_picture)
 
         # Load images
         dog["image"] = dog_pic
@@ -191,16 +227,12 @@ def pipeline():
         dog["features"]["kp"], dog["features"]["descriptors"] = feature_extraction(dog["image"])
         dogs_frame["features"]["kp"], dogs_frame["features"]["descriptors"] = feature_extraction(dogs_frame["image"])
 
-        #dog_keypoints = draw_keypoints(dog)
-        #dogs_frame_keypoints = draw_keypoints(dogs_frame)
-
         # Match features
         matches, matches_mask = match_features(dog["features"]["descriptors"], dogs_frame["features"]["descriptors"])
-
+        
         # Draw matches
         img_with_matches = draw_matches(dog, dogs_frame, matches, matches_mask)
-        #cv2.imshow("Dog Keypoints",dog_keypoints)
-        #cv2.imshow("Video Keypoints",dogs_frame_keypoints)
+        cv2.namedWindow("video with matches", cv2.WINDOW_NORMAL)
         cv2.imshow("video with matches",img_with_matches)
 
         # The program finishes if the key 'q' is pressed
