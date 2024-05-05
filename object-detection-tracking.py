@@ -198,9 +198,9 @@ def frame_position(width, center):
     pos_t0 = center[0]
     if pos_tm1 != -1:  # Check if pos_tm1 has been initialized
         if pos_t0 > int(width / 2) and pos_tm1 < int(width / 2):
-            cnt_right_2_left += 1
-        elif pos_t0 < int(width / 2) and pos_tm1 > int(width / 2):
             cnt_left_2_right += 1
+        elif pos_t0 < int(width / 2) and pos_tm1 > int(width / 2):
+            cnt_right_2_left += 1
     pos_tm1 = pos_t0  # Update pos_tm1 regardless of the condition
 
 
