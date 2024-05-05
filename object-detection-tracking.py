@@ -8,6 +8,10 @@ import cv2
 import argparse
 import numpy as np
 
+cnt_left_2_right = 0
+cnt_right_2_left = 0
+pos_tm1 = -1
+
 #x_min,y_min,x_max,y_max=38400,2160,0,0
 
 def parse_user_input():
@@ -103,7 +107,7 @@ def feature_extraction(frame):
         # Apply this new mask to the original image to isolate the area of the largest contour
         masked_frame = cv2.bitwise_and(frame, frame, mask=largest_contour_mask)
 
-        draw_object(frame, largest_contour)
+        draw_rectangle(frame, largest_contour)
 
     # Initialize the SIFT detector
     sift = cv2.SIFT_create()
@@ -112,7 +116,7 @@ def feature_extraction(frame):
     keypoints, descriptors = sift.detectAndCompute(masked_frame, None)
     return keypoints, descriptors
 
-def draw_object(frame, largest_contour):
+def draw_rectangle(frame, largest_contour):
     # Calculate de position to draw a rectange around the dog's identifier
     x, y, w, h = cv2.boundingRect(largest_contour)
     
@@ -151,23 +155,7 @@ def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tupl
     
     return matches, matches_mask
 
-def draw_keypoints(img):
-    """
-    Draw keypoints on the image.
-
-    Args:
-        img (np.ndarray): Image on which to draw keypoints.
-
-    Returns:
-        np.ndarray: Image with keypoints drawn.
-    """
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    sift = cv2.SIFT_create()
-    keypoints = sift.detect(gray, None)
-    img_with_kp = cv2.drawKeypoints(gray, keypoints, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-    return img_with_kp
-
-def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask: list) -> np.ndarray:
+def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask: list) -> np.ndarray: 
     """
     Draw matches between two images.
 
@@ -180,11 +168,43 @@ def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask
     Returns:
         np.ndarray: Image with matches drawn.
     """
-    img = img_2["image"]
-    draw_params = dict(matchColor=(0, 255, 0), singlePointColor=None, matchesMask=mask, flags=2)
-    #img = q(img_1["image"], img_1["features"]["kp"], img_2["image"], img_2["features"]["kp"], matches, output_img, **draw_params)
     img = cv2.drawKeypoints(img_2["image"], img_2["features"]["kp"], None, color=(0, 255, 0), flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT)
     return img
+
+def calculate_center_point(frame, keypoints):
+    """
+    Calculate the center point of all keypoints.
+
+    Args:
+        keypoints (list of cv2.KeyPoint): List of keypoints.
+
+    Returns:
+        tuple: x, y coordinates of the center point.
+    """
+    if not keypoints:
+        return (0, 0)
+    
+    # Extracting the x and y coordinates of the keypoints
+    coordinates = np.array([(kp.pt[0], kp.pt[1]) for kp in keypoints])
+    
+    # Calculating the mean of the coordinates
+    center = np.mean(coordinates, axis=0)
+    center_int = (int(center[0]), int(center[1]))
+    cv2.circle(frame, center_int, 5, (0, 0, 255), 10)
+    return center_int
+
+def frame_position(width, center):
+    global cnt_left_2_right, cnt_right_2_left, pos_tm1
+    pos_t0 = center[0]
+    if pos_tm1 != -1:  # Check if pos_tm1 has been initialized
+        if pos_t0 > int(width / 2) and pos_tm1 < int(width / 2):
+            cnt_right_2_left += 1
+        elif pos_t0 < int(width / 2) and pos_tm1 > int(width / 2):
+            cnt_left_2_right += 1
+    pos_tm1 = pos_t0  # Update pos_tm1 regardless of the condition
+
+
+
 
 def close_windows(cap:cv2.VideoCapture)->None:
     
@@ -223,15 +243,29 @@ def pipeline():
         dog["image"] = dog_pic
         dogs_frame["image"] = frame
 
+        height, width = dogs_frame["image"].shape[:2]
+
         # Extract img features
         dog["features"]["kp"], dog["features"]["descriptors"] = feature_extraction(dog["image"])
         dogs_frame["features"]["kp"], dogs_frame["features"]["descriptors"] = feature_extraction(dogs_frame["image"])
 
         # Match features
         matches, matches_mask = match_features(dog["features"]["descriptors"], dogs_frame["features"]["descriptors"])
-        
+
         # Draw matches
         img_with_matches = draw_matches(dog, dogs_frame, matches, matches_mask)
+
+        center_point = calculate_center_point(img_with_matches,dogs_frame["features"]["kp"])
+        cv2.line(img_with_matches,(int(width/2),0),(int(width/2),height),(255, 0, 0),2)
+        frame_position(width, center_point)
+
+        txt_left_2_right = f"Dog crossing the reference line from left to right: {cnt_left_2_right}"
+        txt_right_2_left = f"Dog crossing the reference line from right to left: {cnt_right_2_left}"
+        cv2.putText(img_with_matches, txt_left_2_right, (15, height - 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 5)
+        cv2.putText(img_with_matches, txt_left_2_right, (15, height - 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(img_with_matches, txt_right_2_left, (15, height - 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 5)
+        cv2.putText(img_with_matches, txt_right_2_left, (15, height - 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
         cv2.namedWindow("video with matches", cv2.WINDOW_NORMAL)
         cv2.imshow("video with matches",img_with_matches)
 
