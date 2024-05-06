@@ -1,5 +1,5 @@
 """
-This Code 
+This Code  
 
 python object-detection-tracking.py --video_file dogs_in_patio4.mp4  --dog_selection_picture arlo-identifier-real5.jpg --frame_resize_percentage 100
 """
@@ -15,6 +15,12 @@ pos_tm1 = -1
 #x_min,y_min,x_max,y_max=38400,2160,0,0
 
 def parse_user_input():
+    """
+    Parse the command-line arguments provided by the user.
+
+    Returns:
+        tuple[str, str]: A tuple containing the path to the object image and the input video.
+    """
     parser = argparse.ArgumentParser(prog='Object Detection and Tracking', 
                                     description='Identify the object asigned by the user', 
                                     epilog='Juan Carlos Chávez Villarreal - 2024')
@@ -30,45 +36,8 @@ def parse_user_input():
                         required=True,
                         help="Please type the the path to the picture with the dog we want to follow")
     
-    parser.add_argument('--frame_resize_percentage', 
-                        type=int, 
-                        help='Rescale the video frames, e.g., 20 if scaled to 20%')
-    
     args = parser.parse_args()
-    return args    
-
-def rescale_frame(frame, percentage):
-    """
-    rescales the frame to the size the user indicates
-
-    Input:
-        frame: video frame being shown
-    
-    Return:
-        resized frame:
-    
-    """
-    # Resize current frame
-    width = int(frame.shape[1] * percentage / 100)
-    height = int(frame.shape[0] * percentage / 100)
-    frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
-    return frame
-
-def resize_image(img: np.ndarray) -> np.ndarray:
-    """
-    Resize the image to a specified scale for better visualization.
-
-    Args:
-        img (np.ndarray): Image to resize.
-
-    Returns:
-        np.ndarray: Resized image.
-    """
-    width = int(img.shape[1] * 1)
-    height = int(img.shape[0] * 1)
-    dim = (width, height)
-    resized_img = cv2.resize(img, dim, interpolation = cv2.INTER_AREA)
-    return resized_img
+    return args
 
 def feature_extraction(frame):
     """
@@ -89,9 +58,6 @@ def feature_extraction(frame):
 
     # Create a mask to exclude the white color
     white_mask = cv2.inRange(frame_HSV, lower_white, upper_white)
-
-    # Apply the mask to the original image
-    bitwise_AND = cv2.bitwise_and(frame, frame, mask=white_mask)
     
     contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
@@ -107,22 +73,12 @@ def feature_extraction(frame):
         # Apply this new mask to the original image to isolate the area of the largest contour
         masked_frame = cv2.bitwise_and(frame, frame, mask=largest_contour_mask)
 
-        draw_rectangle(frame, largest_contour)
-
     # Initialize the SIFT detector
     sift = cv2.SIFT_create()
 
     # Detect keypoints and compute descriptors
     keypoints, descriptors = sift.detectAndCompute(masked_frame, None)
     return keypoints, descriptors
-
-def draw_rectangle(frame, largest_contour):
-    # Calculate de position to draw a rectange around the dog's identifier
-    x, y, w, h = cv2.boundingRect(largest_contour)
-    
-    # Draw a red rectangle around the dog's identifier
-    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
-    #cv2.circle(frame,())
 
 
 def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tuple[np.ndarray, list]:
@@ -155,23 +111,19 @@ def match_features(descriptors_1: np.ndarray, descriptors_2: np.ndarray) -> tupl
     
     return matches, matches_mask
 
-def draw_matches(img_1: np.ndarray, img_2: np.ndarray, matches: np.ndarray, mask: list) -> np.ndarray: 
+def extract_good_keypoints(keypoints, matches, matches_mask):
     """
-    Draw matches between two images.
 
-    Args:
-        img_1 (np.ndarray): First image.
-        img_2 (np.ndarray): Second image.
-        matches (np.ndarray): Matched features.
-        mask (list): Mask for good matches.
-
-    Returns:
-        np.ndarray: Image with matches drawn.
     """
-    img = cv2.drawKeypoints(img_2["image"], img_2["features"]["kp"], None, color=(0, 255, 0), flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT)
-    return img
+    good_keypoints = []
 
-def calculate_center_point(frame, keypoints):
+    for i, (m, n) in enumerate(matches):
+        if matches_mask[i][0]:
+            good_keypoints.append(keypoints[m.trainIdx])
+
+    return good_keypoints
+
+def draw_characteristics( frame, keypoints):
     """
     Calculate the center point of all keypoints.
 
@@ -184,27 +136,41 @@ def calculate_center_point(frame, keypoints):
     if not keypoints:
         return (0, 0)
     
+    frame = cv2.drawKeypoints(frame, keypoints, None, color=(0, 255, 0), flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT)
+
     # Extracting the x and y coordinates of the keypoints
-    coordinates = np.array([(kp.pt[0], kp.pt[1]) for kp in keypoints])
+    coordinates = np.array([(int(kp.pt[0]), int(kp.pt[1])) for kp in keypoints])
     
     # Calculating the mean of the coordinates
     center = np.mean(coordinates, axis=0)
     center_int = (int(center[0]), int(center[1]))
-    cv2.circle(frame, center_int, 5, (0, 0, 255), 10)
-    return center_int
+    frame =  cv2.circle(frame, center_int, 5, (0, 0, 255), -1)
+
+    # Find the leftmost point (minimum x-coordinate)
+    leftmost = coordinates[np.argmin(coordinates[:, 0])]
+
+    # Find the rightmost point (maximum x-coordinate)
+    rightmost = coordinates[np.argmax(coordinates[:, 0])]
+
+    # Find the uppermost point (minimum y-coordinate)
+    uppermost = coordinates[np.argmin(coordinates[:, 1])]
+
+    # Find the lowermost point (maximum y-coordinate)
+    lowermost = coordinates[np.argmax(coordinates[:, 1])]
+
+    # Drawing the rectangle
+    frame = cv2.rectangle(frame, (leftmost[0], uppermost[1]), (rightmost[0], lowermost[1]), (0, 0, 255), 2)  
+    return center_int, frame
 
 def frame_position(width, center):
     global cnt_left_2_right, cnt_right_2_left, pos_tm1
     pos_t0 = center[0]
     if pos_tm1 != -1:  # Check if pos_tm1 has been initialized
-        if pos_t0 > int(width / 2) and pos_tm1 < int(width / 2):
+        if pos_t0 >= int(width / 2) and pos_tm1 < int(width / 2):
             cnt_left_2_right += 1
-        elif pos_t0 < int(width / 2) and pos_tm1 > int(width / 2):
+        elif pos_t0 <= int(width / 2) and pos_tm1 > int(width / 2):
             cnt_right_2_left += 1
     pos_tm1 = pos_t0  # Update pos_tm1 regardless of the condition
-
-
-
 
 def close_windows(cap:cv2.VideoCapture)->None:
     
@@ -252,28 +218,28 @@ def pipeline():
         # Match features
         matches, matches_mask = match_features(dog["features"]["descriptors"], dogs_frame["features"]["descriptors"])
 
-        # Draw matches
-        img_with_matches = draw_matches(dog, dogs_frame, matches, matches_mask)
+        dogs_frame["features"]["kp"] = extract_good_keypoints(dogs_frame["features"]["kp"], matches, matches_mask)
 
-        center_point = calculate_center_point(img_with_matches,dogs_frame["features"]["kp"])
-        cv2.line(img_with_matches,(int(width/2),0),(int(width/2),height),(255, 0, 0),2)
+        center_point, dogs_frame["image"] = draw_characteristics(dogs_frame["image"],dogs_frame["features"]["kp"])
+        
+        cv2.line(dogs_frame["image"],(int(width/2),0),(int(width/2),height),(255, 0, 0),2)
         frame_position(width, center_point)
 
         txt_left_2_right = f"Dog crossing the reference line from left to right: {cnt_left_2_right}"
         txt_right_2_left = f"Dog crossing the reference line from right to left: {cnt_right_2_left}"
-        cv2.putText(img_with_matches, txt_left_2_right, (15, height - 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 5)
-        cv2.putText(img_with_matches, txt_left_2_right, (15, height - 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        cv2.putText(img_with_matches, txt_right_2_left, (15, height - 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 5)
-        cv2.putText(img_with_matches, txt_right_2_left, (15, height - 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(dogs_frame["image"], txt_left_2_right, (15, height - 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 5)
+        cv2.putText(dogs_frame["image"], txt_left_2_right, (15, height - 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+        cv2.putText(dogs_frame["image"], txt_right_2_left, (15, height - 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 5)
+        cv2.putText(dogs_frame["image"], txt_right_2_left, (15, height - 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
         cv2.namedWindow("video with matches", cv2.WINDOW_NORMAL)
-        cv2.imshow("video with matches",img_with_matches)
+        cv2.imshow("video with matches",dogs_frame["image"])
 
         # The program finishes if the key 'q' is pressed
         key = cv2.waitKey(5)
         if key == ord('q') or key == 27:
             print("Programm finished!")
             break
-
+ 
 if __name__ == "__main__":
     pipeline()
